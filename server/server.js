@@ -42,9 +42,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/appointments', appointmentRoutes);
-app.use('/api/agent',        agentRoutes);
-app.use('/api/auth',         authRoutes);
-app.use('/api/doctors',      doctorRoutes);
+app.use('/api/agent',agentRoutes);
+app.use('/api/auth',authRoutes);
+app.use('/api/doctors',doctorRoutes);
 
 app.get('/health', (req, res) => {
   res.json({

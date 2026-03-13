@@ -44,7 +44,7 @@ export default function NearbyDoctorsMap({ user, onBookDoctor }) {
   const [locating,     setLocating]     = useState(false);
   const [error,        setError]        = useState('');
   const [userLoc,      setUserLoc]      = useState(null);  // { lat, lng }
-  const [radius,       setRadius]       = useState(10);    // km
+  const [radius,       setRadius]       = useState(10);    // km (UI unit)
   const [specFilter,   setSpecFilter]   = useState('All');
   const [mapReady,     setMapReady]     = useState(false);
   const [showFilters,  setShowFilters]  = useState(false);
@@ -128,10 +128,12 @@ export default function NearbyDoctorsMap({ user, onBookDoctor }) {
   }, [radius]);
 
   /* ── Fetch nearby doctors ─────────────────────────────── */
+  // FIX: multiply km radius by 1000 to convert to metres for the backend
   const fetchNearby = useCallback(async (lat, lng, r = radius) => {
     setLoading(true); setError('');
     try {
-      const url = `${API}/api/doctors/nearby?lat=${lat}&lng=${lng}&radius=${r}`;
+      const radiusMetres = r * 1000; // ← convert km → metres
+      const url = `${API}/api/doctors/nearby?lat=${lat}&lng=${lng}&radius=${radiusMetres}`;
       const res  = await fetch(url);
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Failed to load nearby doctors');
@@ -257,8 +259,14 @@ export default function NearbyDoctorsMap({ user, onBookDoctor }) {
             </p>
           </div>
           <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-            {/* Radius selector */}
-            <select value={radius} onChange={e=>{setRadius(Number(e.target.value));if(userLoc)fetchNearby(userLoc.lat,userLoc.lng,Number(e.target.value));}}
+            {/* Radius selector — values in km, conversion handled in fetchNearby */}
+            <select
+              value={radius}
+              onChange={e => {
+                const newR = Number(e.target.value);
+                setRadius(newR);
+                if (userLoc) fetchNearby(userLoc.lat, userLoc.lng, newR);
+              }}
               style={{ background:T.card, border:`1px solid ${T.border}`, color:T.text, borderRadius:10, padding:'7px 12px', fontSize:12, outline:'none', cursor:'pointer', fontFamily:'inherit' }}>
               {[2,5,10,20,50].map(r=><option key={r} value={r}>{r} km</option>)}
             </select>

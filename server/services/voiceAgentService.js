@@ -1,10 +1,23 @@
 'use strict';
 
 const Groq         = require('groq-sdk');
+const mongoose     = require('mongoose');
 const Appointment  = require('../models/Appointment');
 const Conversation = require('../models/Conversation');
-const Doctor       = require('../models/doctor');
 const emailService = require('./emailService');
+
+/* ================================================================
+   SAFE MODEL GETTER
+   Uses mongoose model registry — always populated by the time any
+   tool method runs (DB is connected by then).
+   Falls back to require() if not yet registered.
+================================================================ */
+function getDoctor() {
+  if (mongoose.modelNames().includes('Doctor')) {
+    return mongoose.model('Doctor');
+  }
+  return require('../models/doctor');
+}
 
 /* ================================================================
    EMAIL HELPERS
@@ -55,8 +68,6 @@ function cleanEmail(raw) {
 
 /* ================================================================
    VOICE AGENT SERVICE  (Groq · openai/gpt-oss-20b)
-   Install : npm install groq-sdk
-   API key : https://console.groq.com/keys
 ================================================================ */
 class VoiceAgentService {
   constructor() {
@@ -143,7 +154,7 @@ class VoiceAgentService {
         type: 'function',
         function: {
           name: 'cancel_appointment',
-          description: 'Cancel the most recent upcoming appointment for the patient. Look up by patientEmail + date or use appointmentId if known.',
+          description: 'Cancel the most recent upcoming appointment for the patient.',
           parameters: {
             type: 'object',
             properties: {
@@ -238,6 +249,7 @@ Cancellation flow:
     delete this.modelCooldowns[model];
     return false;
   }
+
   setCooldown(model, seconds) {
     this.modelCooldowns[model] = Date.now() + seconds * 1000;
     console.warn(`⏳ ${model} cooldown: ${seconds}s`);
@@ -298,17 +310,15 @@ Cancellation flow:
           assistantMsg = response.choices[0].message;
         }
 
-        // Strip leaked raw function-call syntax (safety net for weaker models)
+        // Strip leaked raw function-call syntax
         let text = assistantMsg.content?.trim() ?? '';
         text = text
           .replace(/<function=[^>]+>[\s\S]*?<\/function>/g, '')
           .replace(/<function=[^>]+>[\s\S]*$/gm, '')
           .trim();
 
-        // FIX: Empty response after tool loop — model responded with only tool
-        // calls and no final text. Ask it explicitly for a spoken reply.
+        // Empty response after tool loop — ask model for a spoken reply
         if (!text) {
-          const lastToolResult = msgList[msgList.length - 1];
           msgList.push({
             role: 'user',
             content: 'Please give a brief spoken response to the patient based on the tool result above.'
@@ -395,8 +405,8 @@ Cancellation flow:
 
   /* ─── get_doctors ──────────────────────────────────────────────── */
   async getDoctors(specialization = undefined) {
-    const query = { isActive: true };
-    // FIX: guard empty string — model sometimes passes "" instead of omitting
+    const Doctor = getDoctor();
+    const query  = { isActive: true };
     if (specialization && typeof specialization === 'string' && specialization.trim()) {
       query.specialization = new RegExp(specialization.trim(), 'i');
     }
@@ -423,21 +433,30 @@ Cancellation flow:
 
   /* ─── find_nearby_doctors ──────────────────────────────────────── */
   async findNearbyDoctors({ lat, lng, radiusKm = 10, specialization, locationName }) {
+    const Doctor  = getDoctor();
     const radiusM = radiusKm * 1000;
+
     const query = {
       isActive: true,
-      location: {
-        $nearSphere: {
-          $geometry:    { type: 'Point', coordinates: [lng, lat] },
-          $maxDistance: radiusM,
+      $and: [
+        { 'location.coordinates': { $ne: [0, 0] } },
+        {
+          location: {
+            $nearSphere: {
+              $geometry:    { type: 'Point', coordinates: [lng, lat] },
+              $maxDistance: radiusM,
+            },
+          },
         },
-      },
+      ],
     };
+
     if (specialization && typeof specialization === 'string' && specialization.trim()) {
       query.specialization = new RegExp(specialization.trim(), 'i');
     }
 
     const doctors = await Doctor.find(query).select('-password -__v').limit(10);
+
     if (!doctors.length) {
       return {
         success: true, doctors: [],
@@ -494,6 +513,7 @@ Cancellation flow:
 
   /* ─── book_appointment ─────────────────────────────────────────── */
   async bookAppointment(data) {
+    const Doctor       = getDoctor();
     const rawEmail     = data.patientEmail || '';
     const cleanedEmail = cleanEmail(rawEmail);
     if (!isValidEmail(cleanedEmail)) {
@@ -507,8 +527,12 @@ Cancellation flow:
     if (existing) return { success: false, message: 'Slot unavailable. Choose another time.' };
 
     let doctor = null;
-    if (data.doctorId)        doctor = await Doctor.findById(data.doctorId).catch(() => null);
-    if (!doctor && data.doctorName) doctor = await Doctor.findOne({ name: new RegExp(data.doctorName.replace(/^Dr\.?\s*/i, '').trim(), 'i') });
+    if (data.doctorId) doctor = await Doctor.findById(data.doctorId).catch(() => null);
+    if (!doctor && data.doctorName) {
+      doctor = await Doctor.findOne({
+        name: new RegExp(data.doctorName.replace(/^Dr\.?\s*/i, '').trim(), 'i')
+      });
+    }
 
     const appt = new Appointment({
       patientName:  data.patientName,
@@ -524,12 +548,16 @@ Cancellation flow:
     });
     await appt.save();
 
-    try { await emailService.sendAppointmentConfirmation(appt, { name: data.patientName, email: cleanedEmail }); }
-    catch (e) { console.warn('⚠️ Patient email failed:', e.message); }
+    try {
+      await emailService.sendAppointmentConfirmation(appt, { name: data.patientName, email: cleanedEmail });
+    } catch (e) { console.warn('⚠️ Patient email failed:', e.message); }
 
     if (doctor?.email) {
-      try { await emailService.sendDoctorAppointmentNotification(appt, doctor, { name: data.patientName, email: cleanedEmail, phone: data.patientPhone }); }
-      catch (e) { console.warn('⚠️ Doctor email failed:', e.message); }
+      try {
+        await emailService.sendDoctorAppointmentNotification(appt, doctor, {
+          name: data.patientName, email: cleanedEmail, phone: data.patientPhone
+        });
+      } catch (e) { console.warn('⚠️ Doctor email failed:', e.message); }
     }
 
     const clinicAddr = doctor?.location?.address || doctor?.address || '';
@@ -542,21 +570,17 @@ Cancellation flow:
   }
 
   /* ─── cancel_appointment ───────────────────────────────────────── */
-  // FIX: Model was passing fake IDs like "12345". Now supports lookup by
-  // patientEmail + date so cancellation works without a real ObjectId.
   async cancelAppointment({ appointmentId, patientEmail, date, reason = '' }) {
     let appt = null;
 
-    // Try by real ObjectId first (only if it looks like one)
     if (appointmentId && /^[a-f\d]{24}$/i.test(appointmentId)) {
       appt = await Appointment.findById(appointmentId);
     }
 
-    // Fallback: look up most recent scheduled appointment for this patient
     if (!appt && patientEmail) {
       const query = { patientEmail: patientEmail.toLowerCase(), status: 'scheduled' };
       if (date) query.date = new Date(date);
-      appt = await Appointment.findOne(query).sort({ date: 1 }); // nearest upcoming
+      appt = await Appointment.findOne(query).sort({ date: 1 });
     }
 
     if (!appt) {
@@ -569,8 +593,9 @@ Cancellation flow:
     appt.status = 'cancelled';
     await appt.save();
 
-    try { await emailService.sendCancellationEmail(appt, { name: appt.patientName, email: appt.patientEmail }); }
-    catch (e) { console.warn('⚠️ Cancel email failed:', e.message); }
+    try {
+      await emailService.sendCancellationEmail(appt, { name: appt.patientName, email: appt.patientEmail });
+    } catch (e) { console.warn('⚠️ Cancel email failed:', e.message); }
 
     return {
       success: true,
@@ -582,14 +607,44 @@ Cancellation flow:
   /* ─── get_clinic_info ──────────────────────────────────────────── */
   getClinicInfo(infoType) {
     const info = {
-      address:   process.env.CLINIC_ADDRESS        || '123 Dental Ave, Suite 100, New York, NY 10001',
-      phone:     process.env.CLINIC_PHONE           || '+1 (555) 123-4567',
+      address:   process.env.CLINIC_ADDRESS         || '123 Dental Ave, Suite 100, New York, NY 10001',
+      phone:     process.env.CLINIC_PHONE            || '+1 (555) 123-4567',
       hours:     'Monday-Friday: 9am-6pm, Saturday: 10am-4pm, Sunday: Closed',
-      emergency: process.env.CLINIC_EMERGENCY_PHONE || '+1 (555) 911-0123',
+      emergency: process.env.CLINIC_EMERGENCY_PHONE  || '+1 (555) 911-0123',
     };
     if (infoType === 'all') return { success: true, ...info };
     return { success: true, [infoType]: info[infoType] };
   }
 }
 
-module.exports = new VoiceAgentService();
+/* ================================================================
+   DEFERRED SINGLETON via Proxy
+
+   The old code did `module.exports = new VoiceAgentService()` at
+   require() time. server.js requires this file BEFORE connectDB()
+   runs, so mongoose.model('Doctor') is not yet registered when the
+   constructor fires — causing "Doctor.find is not a function".
+
+   Solution: export a Proxy that looks like the singleton but defers
+   instantiation until the first property is actually accessed
+   (which only happens during a real request, after DB is connected).
+================================================================ */
+let _instance = null;
+
+function getInstance() {
+  if (!_instance) _instance = new VoiceAgentService();
+  return _instance;
+}
+
+module.exports = new Proxy({}, {
+  get(_, prop) {
+    const inst = getInstance();
+    const val  = inst[prop];
+    // Bind methods so `this` inside them still refers to the instance
+    return typeof val === 'function' ? val.bind(inst) : val;
+  },
+  set(_, prop, value) {
+    getInstance()[prop] = value;
+    return true;
+  },
+});

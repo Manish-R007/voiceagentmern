@@ -186,7 +186,8 @@ router.post('/register', async (req, res) => {
     if (!name || !email || !password || !specialization || !qualification || !experience)
       return res.status(400).json({ success: false, error: 'Please fill all required fields' });
 
-    if (await Doctor.findOne({ email }))
+    const existinddoctor = await Doctor.findOne({ email });
+    if (existinddoctor)
       return res.status(400).json({ success: false, error: 'Email already registered' });
 
     // Auto-resolve location: fixes nested bug, geocodes if [0,0]

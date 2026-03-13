@@ -61,41 +61,41 @@ router.post('/patient/login', async (req, res) => {
 /* =========================================================
    DOCTOR REGISTER   POST /api/auth/doctor/register
 ========================================================= */
-router.post('/register', async (req, res) => {
-  try {
-    const { name, email, password, specialization, experience, qualification, phone, address, bio, services } = req.body;
+// router.post('/register', async (req, res) => {
+//   try {
+//     const { name, email, password, specialization, experience, qualification, phone, address, bio, services } = req.body;
 
-    if (!name || !email || !password || !specialization || !experience || !qualification) {
-      return res.status(400).json({ success: false, error: 'Name, email, password, specialization, experience and qualification are required' });
-    }
+//     if (!name || !email || !password || !specialization || !experience || !qualification) {
+//       return res.status(400).json({ success: false, error: 'Name, email, password, specialization, experience and qualification are required' });
+//     }
 
-    const exists = await Doctor.findOne({ email });
-    if (exists) return res.status(400).json({ success: false, error: 'Email already registered' });
+//     const exists = await Doctor.findOne({ email });
+//     if (exists) return res.status(400).json({ success: false, error: 'Email already registered' });
 
-    const doctor = await Doctor.create({
-      name, email, password, specialization,
-      experience: parseInt(experience),
-      qualification, phone, address, bio,
-      services: services || [],
-    });
+//     const doctor = await Doctor.create({
+//       name, email, password, specialization,
+//       experience: parseInt(experience),
+//       qualification, phone, address, bio,
+//       services: services || [],
+//     });
 
-    const token = generateToken(doctor._id, 'doctor');
-    res.status(201).json({
-      success: true,
-      token,
-      user: {
-        id:             doctor._id,
-        name:           doctor.name,
-        email:          doctor.email,
-        role:           'doctor',
-        specialization: doctor.specialization,
-      }
-    });
-  } catch (err) {
-    console.error('Doctor register error:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+//     const token = generateToken(doctor._id, 'doctor');
+//     res.status(201).json({
+//       success: true,
+//       token,
+//       user: {
+//         id:             doctor._id,
+//         name:           doctor.name,
+//         email:          doctor.email,
+//         role:           'doctor',
+//         specialization: doctor.specialization,
+//       }
+//     });
+//   } catch (err) {
+//     console.error('Doctor register error:', err);
+//     res.status(500).json({ success: false, error: err.message });
+//   }
+// });
 
 /* =========================================================
    DOCTOR LOGIN   POST /api/auth/doctor/login
