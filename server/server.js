@@ -211,7 +211,7 @@ io.on('connection', async (socket) => {
         reconnectAttempts = 0;
         socket.emit('transcript', transcriptData);
 
-        if (isSarahSpeaking) return; // gate AI only, not reconnect counter
+        if (isSarahSpeaking) return; // gate AI while Sarah speaks
         if (!transcriptData.isFinal || !transcriptData.text.trim()) return;
 
         try {
