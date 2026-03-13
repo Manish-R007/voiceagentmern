@@ -129,13 +129,11 @@ export const useWebRTC = () => {
       utterance.pitch = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
-      const female = voices.find(v =>
-        v.name.includes('Samantha') ||
-        v.name.includes('Google UK English Female') ||
-        v.name.includes('Microsoft Zira') ||
-        (v.lang === 'en-US' && v.name.toLowerCase().includes('female'))
+      const male = voices.find(v =>
+        /male|man|alex|daniel|fred|google us english|microsoft david|microsoft mark|microsoft ryan/i.test(v.name) ||
+        (v.lang === 'en-US' && /male|man/.test(v.name.toLowerCase()))
       );
-      if (female) utterance.voice = female;
+      if (male) utterance.voice = male;
 
       const done = () => {
         setTimeout(() => {
@@ -201,10 +199,11 @@ export const useWebRTC = () => {
           let sum = 0;
           for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
           const rms = Math.sqrt(sum / float32.length);
-          if (rms > 0.02) bargeFramesRef.current += 1;
+          // Require stronger, sustained speech to avoid cutting off Sarah
+          if (rms > 0.03) bargeFramesRef.current += 1;
           else bargeFramesRef.current = 0;
 
-          if (bargeFramesRef.current >= 3) {
+          if (bargeFramesRef.current >= 5) {
             bargeInRef.current = true;
             console.log('🛑 Barge-in detected — stopping TTS');
             window.speechSynthesis.cancel();
